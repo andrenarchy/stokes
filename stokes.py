@@ -12,7 +12,8 @@ from dolfin import *
 #    exit()
 
 # Load mesh
-mesh = UnitCube(8, 8, 8)
+#mesh = UnitCube(8, 8, 8)
+mesh = UnitSquare(10,10)
 
 # Define function spaces
 V = VectorFunctionSpace(mesh, "CG", 2)
@@ -26,11 +27,13 @@ def top_bottom(x, on_boundary):
     return x[1] > 1.0 - DOLFIN_EPS or x[1] < DOLFIN_EPS
 
 # No-slip boundary condition for velocity
-noslip = Constant((0.0, 0.0, 0.0))
+#noslip = Constant((0.0, 0.0, 0.0))
+noslip = Constant((0.0, 0.0))
 bc0 = DirichletBC(W.sub(0), noslip, top_bottom)
 
 # Inflow boundary condition for velocity
-inflow = Expression(("-sin(x[1]*pi)", "0.0", "0.0"))
+#inflow = Expression(("-sin(x[1]*pi)", "0.0", "0.0"))
+inflow = Expression(("-sin(x[1]*pi)", "0.0"))
 bc1 = DirichletBC(W.sub(0), inflow, right)
 
 # Boundary condition for pressure at outflow
@@ -38,12 +41,13 @@ zero = Constant(0)
 bc2 = DirichletBC(W.sub(1), zero, left)
 
 # Collect boundary conditions
-bcs = [bc0, bc1, bc2]
+bcs = [bc0, bc1] #, bc2]
 
 # Define variational problem
 (u, p) = TrialFunctions(W)
 (v, q) = TestFunctions(W)
-f = Constant((0.0, 0.0, 0.0))
+#f = Constant((0.0, 0.0, 0.0))
+f = Constant((0.0, 0.0))
 a = inner(grad(u), grad(v))*dx + div(v)*p*dx + q*div(u)*dx
 L = inner(f, v)*dx
 
