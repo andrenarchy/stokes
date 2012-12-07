@@ -2,17 +2,17 @@
 from dolfin import *
 
 # Test for PETSc or Epetra
-if not has_linear_algebra_backend("PETSc") and not has_linear_algebra_backend("Epetra"):
-    info("DOLFIN has not been configured with Trilinos or PETSc. Exiting.")
-    exit()
+#if not has_linear_algebra_backend("PETSc") and not has_linear_algebra_backend("Epetra"):
+#    info("DOLFIN has not been configured with Trilinos or PETSc. Exiting.")
+#    exit()
 
-if not has_krylov_solver_preconditioner("amg"):
-    info("Sorry, this demo is only available when DOLFIN is compiled with AMG "
-	 "preconditioner, Hypre or ML.");
-    exit()
+#if not has_krylov_solver_preconditioner("amg"):
+#    info("Sorry, this demo is only available when DOLFIN is compiled with AMG "
+#	 "preconditioner, Hypre or ML.");
+#    exit()
 
 # Load mesh
-mesh = UnitCubeMesh(16, 16, 16)
+mesh = UnitCube(8, 8, 8)
 
 # Define function spaces
 V = VectorFunctionSpace(mesh, "CG", 2)
@@ -57,14 +57,15 @@ A, bb = assemble_system(a, L, bcs)
 P, btmp = assemble_system(b, L, bcs)
 
 # Create Krylov solver and AMG preconditioner
-solver = KrylovSolver("tfqmr", "amg")
+#solver = KrylovSolver("tfqmr", "amg")
 
 # Associate operator (A) and preconditioner matrix (P)
-solver.set_operators(A, P)
+#solver.set_operators(A, P)
 
 # Solve
 U = Function(W)
-solver.solve(U.vector(), bb)
+#solver.solve(U.vector(), bb)
+solve(a == L, U, bcs)
 
 # Get sub-functions
 u, p = U.split()
