@@ -2,6 +2,9 @@
 import math
 import numpy as np
 from dolfin import *
+from scipy.sparse.linalg import LinearOperator
+# krypy: https://github.com/andrenarchy/krypy
+from krypy import linsys
 
 def main():
     # Load mesh
@@ -10,7 +13,7 @@ def main():
     errs_p = []
     #for i in [ 2**i for i in range(2,7) ]:
         #print('Solving stokes with i={}'.format(i))
-    err_u, err_p = solve_stokes(2**4)
+    err_u, err_p = solve_stokes(2**3, linsolver="krypy")
     print('err_u:',err_u)
     print('err_p:',err_p)
 
@@ -26,8 +29,22 @@ def main():
 #   print('eoc_u: ', eoc_u)
 #   print('eoc_p: ', eoc_p)
 
+def getLinearOperator(A):
+    '''construct a linear operator for easy application in a Krylov subspace method
 
-def solve_stokes(n_unknowns):
+    In a Krylov subspace method we only need the application of a linear operator
+    to a vector or a block and this function returns a scipy.sparse.linalg.LinearOperator 
+    that just does this.
+    '''
+    def matvec(v):
+        vvec = Vector(A.size(1))
+        vvec.set_local(v.reshape(v.shape[0]))
+        resvec = Vector(A.size(0))
+        A.mult(vvec, resvec)
+        return resvec.array()
+    return LinearOperator( (A.size(0), A.size(1)), matvec=matvec )
+
+def solve_stokes(n_unknowns, linsolver="petsc"):
     u_ex = Expression(("-t*sin(x[0]*t)*sin(x[1]*t)",
                                          "-t*cos(x[0]*t)*cos(x[1]*t)"),t=0)
     p_ex = Expression(("exp(t*x[0])+exp(t*x[1])"),t=0)
@@ -65,19 +82,32 @@ def solve_stokes(n_unknowns):
     a = inner(u,v)*dx + dt*(inner(grad(u), grad(v))*dx - div(v)*p*dx) - q*div(u)*dx + lam*q*dx + p*l*dx
     bc = DirichletBC(W.sub(0), u_ex, lambda x, bd: bd)
 
-
     ufile_pvd = File("velocity.pvd")
     pfile_pvd = File("pressure.pvd")
     errs_u = []
     errs_p = []
     for t in np.arange(t0,tend,dt):
-        # Solve
+        # set time in expressions
         u_ex.t = t+dt
         p_ex.t = t+dt
         f.t = t+dt
 
+        # update right hand side for implicit Euler
         L = inner(u_old,v)*dx + dt*(inner(f, v)*dx) + p_ex*l*dx
-        solve(a == L, U, bc, solver_parameters = {"linear_solver": "petsc"})
+
+        # solve the linear system
+        if linsolver in ["petsc", "lu", "gmres"]:
+            solve(a == L, U, bc, solver_parameters = {"linear_solver": linsolver})
+        elif linsolver=="krypy":
+            # TODO: preconditioner!
+            A, b = assemble_system(a, L, bc)
+            itsol = linsys.gmres(getLinearOperator(A), b.array().reshape((b.size(),1)), tol=1e-6);
+            print("GMRES performed %d iterations with final res %e." % (len(itsol["relresvec"])-1, itsol["relresvec"][-1]) )
+            U.vector().set_local(itsol["xk"])
+        else:
+            raise RuntimeError("Linear solver '%s' unknown." % linsolver)
+
+
         # Get sub-functions
         u_new, p_new, lam_new = U.split()
         errs_u += [errornorm(u_ex,u_new)]
