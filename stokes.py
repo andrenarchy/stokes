@@ -4,7 +4,7 @@ import numpy as np
 from dolfin import *
 from scipy.sparse.linalg import LinearOperator
 # krypy: https://github.com/andrenarchy/krypy
-from krypy import linsys
+from krypy.krypy import linsys
 
 def main():
     # Load mesh

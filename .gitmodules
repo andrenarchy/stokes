@@ -1,0 +1,3 @@
+[submodule "krypy"]
+	path = krypy
+	url = https://github.com/andrenarchy/krypy
