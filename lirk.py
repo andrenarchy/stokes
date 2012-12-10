@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 # -*- coding: utf8 -*-
 '''Time discretization by Rosenbrock methods.
 
@@ -107,10 +107,10 @@ class LIRK():
 		print('\tTesting {}-stage LIRK method.'.format(self.num_stages))
 		err = abs(np.sum(b)-1)
 		eprint('Order 1',err)
-		err += abs(np.sum(b*betai) - 1/2)
+		err += abs(np.sum(b*betai) - 1./2)
 		eprint('Order 2',err)
-		err = err + abs(np.sum(b*alphai**2) - 1/3)
-		err2 = -1/6
+		err = err + abs(np.sum(b*alphai**2) - 1./3)
+		err2 = -1./6
 		for i in range(self.num_stages):
 			err2 += np.sum(b[i]*beta[i,:]*betai)
 		err += abs(err2)
@@ -123,29 +123,29 @@ class LIRK():
 			eprint('Order 3 for DAEs of order 1',err)
 
 		if self.num_stages == 3:
-			err = self.b[2]*(self.alpha[2,1]+self.gamma[2,1])*np.sum(self.alpha[1,:1])**2 - 1/6 + 2/3*self.gamma_diag
-			err2 = self.gamma_diag - .5 - 1/6*sqrt(3)
+			err = self.b[2]*(self.alpha[2,1]+self.gamma[2,1])*np.sum(self.alpha[1,:1])**2 - 1./6 + 2./3*self.gamma_diag
+			err2 = self.gamma_diag - .5 - 1./6*sqrt(3)
 			eprint('PDE suitable', abs(err)+abs(err2))
 		elif self.num_stages == 4:
-			err = self.b[1]*alphai[1]+self.b[2]*alphai[2]+self.b[3]*alphai[3] - 1/2
+			err = self.b[1]*alphai[1]+self.b[2]*alphai[2]+self.b[3]*alphai[3] - 1./2
 			eprint('Consistency for O(dt)-Jacobian approximation',abs(err))
 			err = self.b[2]*self.alpha[2,1]*alphai[1] + \
-				self.b[3]*(self.alpha[3,1]*alphai[1] + self.alpha[3,2]*alphai[2]) - 1/6
+				self.b[3]*(self.alpha[3,1]*alphai[1] + self.alpha[3,2]*alphai[2]) - 1./6
 			err2 = self.b[2]*self.alpha[2,1]*betai_sub[1] + \
-				self.b[3]*(self.alpha[3,1]*betai_sub[1] + self.alpha[3,2]*betai_sub[2]) - 1/6 + self.gamma_diag/2
+				self.b[3]*(self.alpha[3,1]*betai_sub[1] + self.alpha[3,2]*betai_sub[2]) - 1./6 + self.gamma_diag/2
 			err3 = self.b[2]*beta[2,1]*alphai[1] + \
-				self.b[3]*(beta[3,1]*alphai[1] + beta[3,2]*alphai[2]) - 1/6 + self.gamma_diag/2
+				self.b[3]*(beta[3,1]*alphai[1] + beta[3,2]*alphai[2]) - 1./6 + self.gamma_diag/2
 			eprint('Order 3 for arbitrary W-matrices',abs(err)+abs(err2)+abs(err3))
 
 			err = self.b[3]*beta[2,1]*beta[3,2]*alphai[1]**2 \
-				- 2*self.gamma_diag**4 + 2*self.gamma_diag**3 - 1/3*self.gamma_diag**2
+				- 2*self.gamma_diag**4 + 2*self.gamma_diag**3 - 1./3*self.gamma_diag**2
 			err2 = self.b[2]*beta[2,1]*alphai[1]**2 + \
 				self.b[3]*(beta[3,1]*alphai[1]**2+beta[3,2]*alphai[2]**2) \
-				- 2*self.gamma_diag**3 + 3*self.gamma_diag**2 - 2/3*self.gamma_diag
+				- 2*self.gamma_diag**3 + 3*self.gamma_diag**2 - 2./3*self.gamma_diag
 			err3 = self.b[3]*beta[3,2]*beta[2,1]*beta[1,0]
 			eprint('PDE suitability',abs(err)+abs(err2)+abs(err3))
 
-			err = self.gamma_diag**4 - 3*self.gamma_diag**3+3/2*self.gamma_diag**2-1/6*self.gamma_diag
+			err = self.gamma_diag**4 - 3*self.gamma_diag**3+3./2*self.gamma_diag**2-1./6*self.gamma_diag
 			eprint('L-stability',abs(err))
 
 	def __repr__(self):
@@ -242,8 +242,8 @@ alpha_ros3p.append([1,0,0])
 gamma_ros3p = [[gamma,0,0]]
 gamma_ros3p.append([-1,gamma,0])
 gamma_ros3p.append([-gamma,.5-2*gamma,gamma])
-b_ros3p = [2/3, 0, 1/3]
-bhat_ros3p = [1/3, 1/3, 1/3]
+b_ros3p = [2./3, 0, 1./3]
+bhat_ros3p = [1./3, 1./3, 1./3]
 
 ros3p = LIRK(3,alpha_ros3p,gamma_ros3p,b_ros3p,bhat_ros3p)
 
@@ -261,7 +261,7 @@ gamma_ros3pw = [[gamma,0,0]]
 gamma_ros3pw.append([-1.5773502691896257, gamma, 0])
 gamma_ros3pw.append([-.67075317547305480, -.17075317547305482,gamma])
 b_ros3pw = [.10566243270259355, .049038105676657971, .84529946162074843]
-bhat_ros3pw = [ -.1786327949540818, 1/3, .84529946162074843]
+bhat_ros3pw = [ -.1786327949540818, 1./3, .84529946162074843]
 
 ros3pw = LIRK(3,alpha_ros3pw,gamma_ros3pw,b_ros3pw,bhat_ros3pw)
 
@@ -347,9 +347,9 @@ a43    = 0
 c21    = -1.121794871794876e-1
 c31    = 2.54
 c32    = -3.84
-c41    = 29/75
+c41    = 29./75
 c42    =-7.2e-1
-c43    = 1/30
+c43    = 1./30
 
 alpha_rowdaind2 = [[ 0, 0, 0, 0]]
 alpha_rowdaind2.append([a21, 0, 0, 0])
@@ -359,7 +359,7 @@ gamma_rowdaind2 = [[ gamma, 0, 0, 0]]
 gamma_rowdaind2.append([c21, gamma, 0, 0])
 gamma_rowdaind2.append([c31, c32, gamma, 0])
 gamma_rowdaind2.append([c41, c42, c43, gamma])
-b_rowdaind2 = [ 2/3, 0, 1/30, .3 ]
+b_rowdaind2 = [ 2./3, 0, 1./30, .3 ]
 bhat_rowdaind2 = [ 4.799002800355166e-1, 5.176203811215082e-1, 2.479338842975209e-3, 0]
 
 rowdaind2 = LIRK(4,alpha_rowdaind2,gamma_rowdaind2,b_rowdaind2,bhat_rowdaind2)
