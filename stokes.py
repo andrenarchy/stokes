@@ -92,7 +92,7 @@ def solve_stokes(n_unknowns, linsolver="petsc"):
     # Define variational problem
     (u, p, lam) = TrialFunctions(W)
     (v, q, l) = TestFunctions(W)
-    a = inner(u,v)*dx + dt*(inner(grad(u), grad(v))*dx - div(v)*p*dx) - q*div(u)*dx + lam*q*dx + p*l*dx
+    a = inner(u,v)*dx + dt*(inner(grad(u), grad(v))*dx - div(v)*p*dx - q*div(u)*dx + lam*q*dx + p*l*dx)
     bc = DirichletBC(W.sub(0), u_ex, lambda x, bd: bd)
     # variational problem for preconditioner
     # TODO: adapt preconditioner to time-dependent setting
@@ -111,7 +111,7 @@ def solve_stokes(n_unknowns, linsolver="petsc"):
         f.t = t+dt
 
         # update right hand side for implicit Euler
-        L = inner(u_old,v)*dx + dt*(inner(f, v)*dx) + p_ex*l*dx
+        L = inner(u_old,v)*dx + dt*(inner(f, v)*dx + p_ex*l*dx)
 
         # solve the linear system
         if linsolver in ["petsc", "lu", "gmres"]:
@@ -129,9 +129,9 @@ def solve_stokes(n_unknowns, linsolver="petsc"):
                     return Mamg.solve(x, maxiter=5, tol=0.0).reshape(x.shape)
                 Mprec = LinearOperator( (M.size(0), M.size(1)), Mamg_solve)
 
-            itsol = linsys.gmres(Acsr, bvec, tol=1e-6, M=Mprec);
+            itsol = linsys.minres(Acsr, bvec, tol=1e-6, M=Mprec)
 
-            print("GMRES performed %d iterations with final res %e." % (len(itsol["relresvec"])-1, itsol["relresvec"][-1]) )
+            print("MINRES performed %d iterations with final res %e." % (len(itsol["relresvec"])-1, itsol["relresvec"][-1]) )
             U.vector().set_local(itsol["xk"])
         else:
             raise RuntimeError("Linear solver '%s' unknown." % linsolver)
