@@ -7,6 +7,7 @@ from scipy.sparse import csr_matrix
 from numpy import intc
 # krypy: https://github.com/andrenarchy/krypy
 from krypy.krypy import linsys
+from pyamg import smoothed_aggregation_solver
 
 parameters.linear_algebra_backend = "uBLAS"
 
@@ -93,6 +94,11 @@ def solve_stokes(n_unknowns, linsolver="petsc"):
     (v, q, l) = TestFunctions(W)
     a = inner(u,v)*dx + dt*(inner(grad(u), grad(v))*dx - div(v)*p*dx) - q*div(u)*dx + lam*q*dx + p*l*dx
     bc = DirichletBC(W.sub(0), u_ex, lambda x, bd: bd)
+    # variational problem for preconditioner
+    # TODO: adapt preconditioner to time-dependent setting
+    Mvariational = inner(grad(u), grad(v))*dx + p*q*dx
+    Mprec = None
+
 
     ufile_pvd = File("velocity.pvd")
     pfile_pvd = File("pressure.pvd")
@@ -111,11 +117,20 @@ def solve_stokes(n_unknowns, linsolver="petsc"):
         if linsolver in ["petsc", "lu", "gmres"]:
             solve(a == L, U, bc, solver_parameters = {"linear_solver": linsolver})
         elif linsolver=="krypy":
-            # TODO: preconditioner!
             A, b = assemble_system(a, L, bc)
-            Asp = get_csr_matrix(A)
+            Acsr = get_csr_matrix(A)
             bvec = b.data().reshape((b.size(),1))
-            itsol = linsys.gmres(Asp, bvec, tol=1e-6);
+
+            if Mprec is None:
+                M, _ = assemble_system(Mvariational, L, bc)
+                Mcsr = get_csr_matrix(M)
+                Mamg = smoothed_aggregation_solver(Mcsr, max_levels=25, max_coarse=50)
+                def Mamg_solve(x):
+                    return Mamg.solve(x, maxiter=5, tol=0.0).reshape(x.shape)
+                Mprec = LinearOperator( (M.size(0), M.size(1)), Mamg_solve)
+
+            itsol = linsys.gmres(Acsr, bvec, tol=1e-6, M=Mprec);
+
             print("GMRES performed %d iterations with final res %e." % (len(itsol["relresvec"])-1, itsol["relresvec"][-1]) )
             U.vector().set_local(itsol["xk"])
         else:
