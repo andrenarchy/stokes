@@ -3,8 +3,12 @@ import math
 import numpy as np
 from dolfin import *
 from scipy.sparse.linalg import LinearOperator
+from scipy.sparse import csr_matrix
+from numpy import intc
 # krypy: https://github.com/andrenarchy/krypy
 from krypy.krypy import linsys
+
+parameters.linear_algebra_backend = "uBLAS"
 
 def main():
     # Load mesh
@@ -28,6 +32,14 @@ def main():
 #   print('err_p: ', errs_p)
 #   print('eoc_u: ', eoc_u)
 #   print('eoc_p: ', eoc_p)
+
+def get_csr_matrix(A):
+    '''get csr matrix from dolfin without copying data
+
+    cf. http://code.google.com/p/pyamg/source/browse/branches/2.0.x/Examples/DolfinFormulation/demo.py
+    '''
+    (row,col,data) = A.data()
+    return csr_matrix( (data,intc(col),intc(row)), shape=(A.size(0),A.size(1)) )
 
 def getLinearOperator(A):
     '''construct a linear operator for easy application in a Krylov subspace method
@@ -101,7 +113,9 @@ def solve_stokes(n_unknowns, linsolver="petsc"):
         elif linsolver=="krypy":
             # TODO: preconditioner!
             A, b = assemble_system(a, L, bc)
-            itsol = linsys.gmres(getLinearOperator(A), b.array().reshape((b.size(),1)), tol=1e-6);
+            Asp = get_csr_matrix(A)
+            bvec = b.data().reshape((b.size(),1))
+            itsol = linsys.gmres(Asp, bvec, tol=1e-6);
             print("GMRES performed %d iterations with final res %e." % (len(itsol["relresvec"])-1, itsol["relresvec"][-1]) )
             U.vector().set_local(itsol["xk"])
         else:
