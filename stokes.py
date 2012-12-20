@@ -3,7 +3,7 @@ import math
 import numpy as np
 from dolfin import *
 from scipy.sparse.linalg import LinearOperator
-from scipy.sparse import csr_matrix, bmat
+from scipy.sparse import csr_matrix
 from numpy import intc
 # krypy: https://github.com/andrenarchy/krypy
 from krypy.krypy import linsys
@@ -18,7 +18,7 @@ def main():
     errs_p = []
     #for i in [ 2**i for i in range(2,7) ]:
         #print('Solving stokes with i={}'.format(i))
-    err_u, err_p = solve_stokes(2**4, linsolver="krypy")
+    err_u, err_p = solve_stokes(2**2, linsolver="krypy")
     print('err_u:',err_u)
     print('err_p:',err_p)
 
@@ -79,61 +79,35 @@ def solve_stokes(n_unknowns, linsolver="petsc"):
     V = VectorFunctionSpace(mesh, "CG", 2)
     Q = FunctionSpace(mesh, "CG", 1)
     L = FunctionSpace(mesh, "R", 0)
-    
-    u_new = Function(V)
-    p_new = Function(Q)
-    lam_new = Function(L)
+    W = MixedFunctionSpace([V,Q,L])
+    w = Function(W)
+
+    # get dof mappings of subspaces
+    Vdofs = W.sub(0).collapse(mesh)[1].values()
+    Qdofs = W.sub(1).collapse(mesh)[1].values()
+    Ldofs = W.sub(2).collapse(mesh)[1].values()
 
     t0 = 0
     tend = 1
-    dt = .05
+    dt = .1
 
     # Initial value
-    u_old = Constant((0,0))
+    u_old = Function(V)
+    u_old.interpolate(u_ex)
+
+    # for initial vector of iterative method
+    w0 = Function(W)
 
     # Define variational problem
-    (u, p, lam) = TrialFunction(V), TrialFunction(Q), TrialFunction(L)
-    (v, q, l) = TestFunction(V), TestFunction(Q), TestFunction(L)
-    bc = DirichletBC(V, u_ex, lambda x, bd: bd)
-
-    # for mass matrix
-    Mvar = inner(u,v)*dx
-    # for stiffness matrix
-    Svar = inner(grad(u), grad(v))*dx
-    # for pressure
-    Bvar = div(v)*p*dx
-    # for velocity divergence
-    Btvar = q*div(u)*dx
-    # lagrange multiplier for divergence
-    Evar = lam*q*dx
-    Etvar = p*l*dx
-    # for pressure mass matrix (needed in preconditioner)
-    Mpvar = p*q*dx
-
-    M = assemble(Mvar)
-    bc.apply(M)
-    M = get_csr_matrix(M)
-
-    S = assemble(Svar)
-    bc.zero(S)
-    S = get_csr_matrix(S)
-
-    B = assemble(Bvar)
-    bc.zero(B)
-    B = get_csr_matrix(B)
-
-    Bt = get_csr_matrix(assemble(Btvar))
-    E = get_csr_matrix(assemble(Evar))
-    Et = get_csr_matrix(assemble(Etvar))
-    A = bmat( [[M + dt*S, -dt*B,  None],
-               [-dt*Bt,    None,  dt*E],
-               [None,     dt*Et, None]], format='csr')
+    (u, p, lam) = TrialFunctions(W) #, TrialFunction(Q), TrialFunction(L)
+    (v, q, l) = TestFunctions(W) #, TestFunction(Q), TestFunction(L)
+    Avar = inner(u,v)*dx + dt*(inner(grad(u), grad(v))*dx - div(v)*p*dx - q*div(u)*dx + lam*q*dx + p*l*dx)
+    bc = DirichletBC(W.sub(0), u_ex, lambda x, bd: bd)
 
     # variational problem for preconditioner
     # TODO: adapt preconditioner to time-dependent setting
     #Mvariational = inner(grad(u), grad(v))*dx + p*q*dx
     Mprec = None
-
 
     ufile_pvd = File("velocity.pvd")
     pfile_pvd = File("pressure.pvd")
@@ -146,25 +120,20 @@ def solve_stokes(n_unknowns, linsolver="petsc"):
         f.t = t+dt
 
         # update right hand side for implicit Euler
-        bvvar = inner(u_old,v)*dx + dt*inner(f, v)*dx
-        bqvar = Constant(0.0)*q*dx
-        blvar = dt*p_ex*l*dx
+        bvar = inner(u_old,v)*dx + dt*(inner(f, v)*dx + p_ex*l*dx)
 
-        bv = assemble(bvvar)
-        bc.apply(bv)
-        bq = assemble(bqvar)
-        bl = assemble(blvar)
-        b = np.r_[ bv.data(), bq.data(), bl.data()]
-        b = b.reshape((b.shape[0],1))
-
-        u_new.vector().zero()
-        bc.apply(u_new.vector())
-        x0 = np.r_[ u_new.vector().array().reshape((u_new.vector().size(),1)), np.zeros((bq.size(),1)), np.zeros((bl.size(),1))]
+        # use initial guess that satisfies boundary conditions
+        w0.vector().zero()
+        bc.apply(w0.vector())
+        x0 = w0.vector().array().reshape((w0.vector().size(),1))
 
         # solve the linear system
         if linsolver in ["petsc", "lu", "gmres"]:
-            solve(a == L, U, bc, solver_parameters = {"linear_solver": linsolver})
+            solve(Avar == bvar, w, bc, solver_parameters = {"linear_solver": linsolver})
         elif linsolver=="krypy":
+            A, b = assemble_system(Avar, bvar, bc)
+            A = get_csr_matrix(A)
+            b = b.data().reshape((b.size(),1))
             #if Mprec is None:
             #    M, _ = assemble_system(Mvariational, L, bc)
             #    Mcsr = get_csr_matrix(M)
@@ -176,14 +145,12 @@ def solve_stokes(n_unknowns, linsolver="petsc"):
             itsol = linsys.minres(A, b, x0=x0, tol=1e-9)
 
             print("MINRES performed %d iterations with final res %e." % (len(itsol["relresvec"])-1, itsol["relresvec"][-1]) )
-            u_new.vector().set_local(itsol["xk"][:bv.size()])
-            p_new.vector().set_local(itsol["xk"][bv.size():bv.size()+bq.size()])
-            lam_new.vector().set_local(itsol["xk"][bv.size()+bq.size():])
+            w.vector().set_local(itsol["xk"])
         else:
             raise RuntimeError("Linear solver '%s' unknown." % linsolver)
 
-
         # Get sub-functions
+        u_new, p_new, lam_new = w.split()
         errs_u += [errornorm(u_ex,u_new)]
         errs_p += [errornorm(p_ex,p_new)]
         ufile_pvd << u_new
