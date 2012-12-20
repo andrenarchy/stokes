@@ -74,6 +74,7 @@ def solve_stokes(n_unknowns, linsolver="petsc"):
     f = Expression((lap_u0+grad_p0+dtu0, lap_u1+grad_p1+dtu1),Reynolds=1,t=0)
 
     mesh = UnitSquare(n_unknowns,n_unknowns)
+    h = 1/n_unknowns #+1? TODO
 
     # Define function spaces
     V = VectorFunctionSpace(mesh, "CG", 2)
@@ -89,7 +90,7 @@ def solve_stokes(n_unknowns, linsolver="petsc"):
 
     t0 = 0
     tend = 1
-    dt = .1
+    dt = .025
 
     # Initial value
     u_old = Function(V)
@@ -106,7 +107,8 @@ def solve_stokes(n_unknowns, linsolver="petsc"):
 
     # variational problem for preconditioner
     # TODO: adapt preconditioner to time-dependent setting
-    Mvar = inner(grad(u), grad(v))*dx + p*q*dx + lam*l*dx
+    Mvar = inner(u,v)*dx + dt*inner(grad(u), grad(v))*dx + p*q*dx + lam*l*dx
+    Nvar = inner(grad(p),grad(q))*dx
     Mprec = None
 
     ufile_pvd = File("velocity.pvd")
@@ -134,15 +136,47 @@ def solve_stokes(n_unknowns, linsolver="petsc"):
             A, b = assemble_system(Avar, bvar, bc)
             A = get_csr_matrix(A)
             b = b.data().reshape((b.size(),1))
+
+            # build preconditioner 
+            # cf. "Fast iterative solvers for discrete Stokes equations", 
+            # Peters, Reichelt, Reusken 2005
             if Mprec is None:
                 M, _ = assemble_system(Mvar, bvar, bc)
-                Mcsr = get_csr_matrix(M)
-                Mamg = smoothed_aggregation_solver(Mcsr, max_levels=25, max_coarse=50)
-                def Mamg_solve(x):
-                    return Mamg.solve(x, maxiter=5, tol=1e-16).reshape(x.shape)
-                Mprec = LinearOperator( (M.size(0), M.size(1)), Mamg_solve)
+                M = get_csr_matrix(M)
+                MV = M[Vdofs,:][:,Vdofs]
+                MQ = M[Qdofs,:][:,Qdofs]
+                ML = M[Ldofs,:][:,Ldofs]
 
-            itsol = linsys.minres(A, b, x0=x0, tol=1e-8, M=Mprec)
+                N, _ = assemble_system(Nvar, bvar, bc)
+                N = get_csr_matrix(N)
+                NQ = N[Qdofs,:][:,Qdofs]
+
+                MVamg = smoothed_aggregation_solver(MV, max_levels=25, max_coarse=50)
+                MQamg = smoothed_aggregation_solver(MQ, max_levels=25, max_coarse=50)
+                NQamg = smoothed_aggregation_solver(NQ, max_levels=25, max_coarse=50)
+                amgtol = 1e-15
+                amgmaxiter = 5
+
+                def Prec_solve(x):
+                    xV = x[Vdofs]
+                    xQ = x[Qdofs]
+                    xL = x[Ldofs]
+                    ret = np.zeros(x.shape)
+                    ret[Vdofs] = MVamg.solve(xV, maxiter=amgmaxiter, tol=amgtol).reshape(xV.shape)
+                    if h**2 <= dt:
+                        ret[Qdofs] =           MQamg.solve(xQ, maxiter=amgmaxiter, tol=amgtol).reshape(xQ.shape) \
+                                   + (1/dt)   *NQamg.solve(xQ, maxiter=amgmaxiter, tol=amgtol).reshape(xQ.shape)
+                    else:
+                        ret[Qdofs] = (h**2/dt)*MQamg.solve(xQ, maxiter=amgmaxiter, tol=amgtol).reshape(xQ.shape) \
+                                   + (1/dt)   *NQamg.solve(xQ, maxiter=amgmaxiter, tol=amgtol).reshape(xQ.shape)
+                    ret[Ldofs] = xL
+                    return ret
+
+
+                    return Mamg.solve(x, maxiter=5, tol=1e-16).reshape(x.shape)
+                Prec = LinearOperator(A.shape, Prec_solve)
+
+            itsol = linsys.minres(A, b, x0=x0, tol=1e-8, M=Prec)
             print("MINRES performed %d iterations with final res %e." % (len(itsol["relresvec"])-1, itsol["relresvec"][-1]) )
             w.vector().set_local(itsol["xk"])
         else:
