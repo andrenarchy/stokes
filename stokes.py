@@ -8,6 +8,7 @@ from numpy import intc
 # krypy: https://github.com/andrenarchy/krypy
 from krypy.krypy import linsys, utils
 from pyamg import smoothed_aggregation_solver
+#from solver_diagnostics import solver_diagnostics # pyamg
 
 parameters.linear_algebra_backend = "uBLAS"
 
@@ -113,7 +114,6 @@ def solve_stokes(n_unknowns, linsolver="petsc", num_deflation_vectors=0):
     bc = DirichletBC(W.sub(0), u_ex, lambda x, bd: bd)
 
     # variational problem for preconditioner
-    # TODO: adapt preconditioner to time-dependent setting
     Mvar = inner(u,v)*dx + dt*inner(grad(u), grad(v))*dx + p*q*dx + lam*l*dx
     Nvar = inner(grad(p),grad(q))*dx
     Mprec = None
@@ -158,6 +158,24 @@ def solve_stokes(n_unknowns, linsolver="petsc", num_deflation_vectors=0):
                 N = get_csr_matrix(N)
                 NQ = N[Qdofs,:][:,Qdofs]
 
+#                solver_diagnostics(MV,
+#                       fname='solver_diagnostic_MV',
+#                       definiteness='positive',
+#                       symmetry='hermitian'
+#                       )
+#                solver_diagnostics(MQ,
+#                       fname='solver_diagnostic_MQ',
+#                       definiteness='positive',
+#                       symmetry='hermitian'
+#                       )
+#                solver_diagnostics(NQ,
+#                       fname='solver_diagnostic_NQ',
+#                       definiteness='positive',
+#                       symmetry='hermitian'
+#                       )
+#                return
+
+                # TODO: pyamg is non-deterministic atm. fix it! :)
                 MVamg = smoothed_aggregation_solver(MV, max_levels=25, max_coarse=50)
                 MQamg = smoothed_aggregation_solver(MQ, max_levels=25, max_coarse=50)
                 NQamg = smoothed_aggregation_solver(NQ, max_levels=25, max_coarse=50)
