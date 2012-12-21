@@ -6,7 +6,7 @@ from scipy.sparse.linalg import LinearOperator
 from scipy.sparse import csr_matrix
 from numpy import intc
 # krypy: https://github.com/andrenarchy/krypy
-from krypy.krypy import linsys
+from krypy.krypy import linsys, utils
 from pyamg import smoothed_aggregation_solver
 
 parameters.linear_algebra_backend = "uBLAS"
@@ -18,7 +18,7 @@ def main():
     errs_p = []
     #for i in [ 2**i for i in range(2,7) ]:
         #print('Solving stokes with i={}'.format(i))
-    err_u, err_p = solve_stokes(2**2, linsolver="krypy")
+    err_u, err_p = solve_stokes(2**2, linsolver="krypy", num_deflation_vectors=10)
     print('err_u:',err_u)
     print('err_p:',err_p)
 
@@ -57,7 +57,7 @@ def getLinearOperator(A):
         return resvec.array()
     return LinearOperator( (A.size(0), A.size(1)), matvec=matvec )
 
-def solve_stokes(n_unknowns, linsolver="petsc"):
+def solve_stokes(n_unknowns, linsolver="petsc", num_deflation_vectors=0):
     u_ex = Expression(("-t*sin(x[0]*t)*sin(x[1]*t)",
                                          "-t*cos(x[0]*t)*cos(x[1]*t)"),t=0)
     p_ex = Expression(("exp(t*x[0])+exp(t*x[1])"),t=0)
@@ -87,6 +87,8 @@ def solve_stokes(n_unknowns, linsolver="petsc"):
     Vdofs = W.sub(0).collapse(mesh)[1].values()
     Qdofs = W.sub(1).collapse(mesh)[1].values()
     Ldofs = W.sub(2).collapse(mesh)[1].values()
+    n_dofs = len(Vdofs) + len(Qdofs) + len(Ldofs)
+    print("#dofs: %d" % n_dofs)
 
     t0 = 0
     tend = 1
@@ -98,6 +100,11 @@ def solve_stokes(n_unknowns, linsolver="petsc"):
 
     # for initial vector of iterative method
     w0 = Function(W)
+
+    # deflation vectors
+    Z = np.zeros( (n_dofs,0) )
+    AZ = np.zeros( (n_dofs,0) )
+    Proj = None
 
     # Define variational problem
     (u, p, lam) = TrialFunctions(W) #, TrialFunction(Q), TrialFunction(L)
@@ -171,14 +178,30 @@ def solve_stokes(n_unknowns, linsolver="petsc"):
                                    + (1/dt)   *NQamg.solve(xQ, maxiter=amgmaxiter, tol=amgtol).reshape(xQ.shape)
                     ret[Ldofs] = xL
                     return ret
-
-
-                    return Mamg.solve(x, maxiter=5, tol=1e-16).reshape(x.shape)
                 Prec = LinearOperator(A.shape, Prec_solve)
 
-            itsol = linsys.minres(A, b, x0=x0, tol=1e-8, M=Prec)
+            # prepare deflation vectors
+            if Z.shape[1] > 0:
+                #Z, _ = np.linalg.qr(Z)
+                AZ = A*Z
+                Proj, x0 = utils.get_projection(b, Z, AZ, x0)
+
+            itsol = linsys.minres(A, b, x0=x0, tol=1e-12, maxiter=100, Mr=Proj, M=Prec, return_basis = True)
+
             print("MINRES performed %d iterations with final res %e." % (len(itsol["relresvec"])-1, itsol["relresvec"][-1]) )
             w.vector().set_local(itsol["xk"])
+
+            # extract deflation data
+            if ('Vfull' in itsol) and ('Hfull' in itsol):
+                if num_deflation_vectors > 0:
+                    ritz_vals, ritz_coeffs, ritz_res_norm = utils.ritzh(itsol['Vfull'], itsol['Hfull'], Z, AZ, A, M=Prec)
+                    sorti = np.argsort(abs(ritz_vals))
+                    selection = sorti[:num_deflation_vectors]
+                    nZ = Z.shape[1]
+                    Z = np.dot(Z, ritz_coeffs[0:nZ, selection]) \
+                      + np.dot(itsol['Vfull'][:,0:-1], ritz_coeffs[nZ:,selection])
+                else:
+                    Z = np.zeros( (n_dofs,0) )
         else:
             raise RuntimeError("Linear solver '%s' unknown." % linsolver)
 
