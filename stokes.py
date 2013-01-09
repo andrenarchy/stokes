@@ -19,7 +19,7 @@ def main():
     errs_p = []
     #for i in [ 2**i for i in range(2,7) ]:
         #print('Solving stokes with i={}'.format(i))
-    err_u, err_p = solve_stokes(2**2, linsolver="krypy", num_deflation_vectors=10)
+    err_u, err_p = solve_stokes(2**6, linsolver="krypy", n_defl=5)
     print('err_u:',err_u)
     print('err_p:',err_p)
 
@@ -58,11 +58,28 @@ def getLinearOperator(A):
         return resvec.array()
     return LinearOperator( (A.size(0), A.size(1)), matvec=matvec )
 
-def solve_stokes(n_unknowns, linsolver="petsc", num_deflation_vectors=0):
-    u_ex = Expression(("-t*sin(x[0]*t)*sin(x[1]*t)",
-                                         "-t*cos(x[0]*t)*cos(x[1]*t)"),t=0)
-    p_ex = Expression(("exp(t*x[0])+exp(t*x[1])"),t=0)
+def solve_stokes(n_gridpoints, linsolver="krypy", n_defl=0):
+    alpha = 20
+    beta = 5
 
+    sin0 = "sin(alpha*x[0]*t)"
+    sin1 = "sin(alpha*x[1]*t)"
+    cos0 = "cos(alpha*x[0]*t)"
+    cos1 = "cos(alpha*x[1]*t)"
+    u0 = sin0+"*"+sin1
+    u1 = cos0+"*"+cos1
+
+    d00_u0 = "(-alpha*alpha*t*t*t*"+u0+")"
+    d11_u1 = "(-alpha*alpha*t*t*t*"+u1+")"
+    dt_u0 = "("+u0+" + t*alpha*(x[0]*"+cos0+"*"+sin1+" + x[1]*"+sin0+"*"+cos1+"))"
+    dt_u1 = "("+u1+" - t*alpha*(x[0]*"+sin0+"*"+cos1+" + x[1]*"+cos0+"*"+sin1+"))"
+    d0_p = "(beta*t*exp(beta*t*x[0]))"
+    d1_p = "(beta*t*exp(beta*t*x[1]))"
+
+    u_ex = Expression(("t*"+u0, "t*"+u1), alpha=alpha, t=0)
+    p_ex = Expression(("exp(beta*t*x[0])+exp(beta*t*x[1])"), beta=beta, t=0)
+    f = Expression(( dt_u0+" - "+d00_u0+" + "+d0_p, dt_u1+" - "+d11_u1+" + "+d1_p), alpha=alpha, beta=beta, t=0)
+    '''
     dtu0 = "-sin(t*x[0])*sin(t*x[1]) - t*x[0]*cos(t*x[0])*sin(t*x[1]) - t*x[1]*sin(t*x[0])*cos(t*x[1]) "
     dtu1 = "-cos(t*x[0])*cos(t*x[1]) + t*x[0]*sin(t*x[0])*cos(t*x[1]) + t*x[1]*cos(t*x[0])*sin(t*x[1]) "
     lap_u0 = "- 2*t*t*t/Reynolds*sin(t*x[0])*sin(t*x[1]) "
@@ -71,11 +88,10 @@ def solve_stokes(n_unknowns, linsolver="petsc", num_deflation_vectors=0):
     nonlin1 = " -t*t**sin(t*x[1])*cos(t*x[1]) "
     grad_p0 = " + t*exp(t*x[0]) "
     grad_p1 = " + t*exp(t*x[1]) "
+    '''
 
-    f = Expression((lap_u0+grad_p0+dtu0, lap_u1+grad_p1+dtu1),Reynolds=1,t=0)
-
-    mesh = UnitSquare(n_unknowns,n_unknowns)
-    h = 1/n_unknowns #+1? TODO
+    mesh = UnitSquare(n_gridpoints,n_gridpoints)
+    h = mesh.hmin()
 
     # Define function spaces
     V = VectorFunctionSpace(mesh, "CG", 2)
@@ -89,11 +105,10 @@ def solve_stokes(n_unknowns, linsolver="petsc", num_deflation_vectors=0):
     Qdofs = W.sub(1).collapse(mesh)[1].values()
     Ldofs = W.sub(2).collapse(mesh)[1].values()
     n_dofs = len(Vdofs) + len(Qdofs) + len(Ldofs)
-    print("#dofs: %d" % n_dofs)
 
     t0 = 0
-    tend = 1
-    dt = .025
+    tend = 0.1
+    dt = 0.01
 
     # Initial value
     u_old = Function(V)
@@ -101,6 +116,7 @@ def solve_stokes(n_unknowns, linsolver="petsc", num_deflation_vectors=0):
 
     # for initial vector of iterative method
     w0 = Function(W)
+    w0.vector().zero()
 
     # deflation vectors
     Z = np.zeros( (n_dofs,0) )
@@ -118,8 +134,9 @@ def solve_stokes(n_unknowns, linsolver="petsc", num_deflation_vectors=0):
     Nvar = inner(grad(p),grad(q))*dx
     Mprec = None
 
-    ufile_pvd = File("velocity.pvd")
-    pfile_pvd = File("pressure.pvd")
+    ufile_pvd = File("results/velocity.pvd")
+    pfile_pvd = File("results/pressure.pvd")
+    norms_u = []
     errs_u = []
     errs_p = []
     for t in np.arange(t0,tend,dt):
@@ -132,7 +149,7 @@ def solve_stokes(n_unknowns, linsolver="petsc", num_deflation_vectors=0):
         bvar = inner(u_old,v)*dx + dt*(inner(f, v)*dx + p_ex*l*dx)
 
         # use initial guess that satisfies boundary conditions
-        w0.vector().zero()
+        #w0.vector().zero()
         bc.apply(w0.vector())
         x0 = w0.vector().array().reshape((w0.vector().size(),1))
 
@@ -175,12 +192,15 @@ def solve_stokes(n_unknowns, linsolver="petsc", num_deflation_vectors=0):
 #                       )
 #                return
 
-                # TODO: pyamg is non-deterministic atm. fix it! :)
+                # pyamg is non-deterministic atm. fix it by setting the random seed
+                # cf. https://code.google.com/p/pyamg/issues/detail?id=139
+                np.random.seed(1337)
+
                 MVamg = smoothed_aggregation_solver(MV, max_levels=25, max_coarse=50)
                 MQamg = smoothed_aggregation_solver(MQ, max_levels=25, max_coarse=50)
                 NQamg = smoothed_aggregation_solver(NQ, max_levels=25, max_coarse=50)
                 amgtol = 1e-15
-                amgmaxiter = 5
+                amgmaxiter = 3
 
                 def Prec_solve(x):
                     xV = x[Vdofs]
@@ -204,17 +224,17 @@ def solve_stokes(n_unknowns, linsolver="petsc", num_deflation_vectors=0):
                 AZ = A*Z
                 Proj, x0 = utils.get_projection(b, Z, AZ, x0)
 
-            itsol = linsys.minres(A, b, x0=x0, tol=1e-12, maxiter=100, Mr=Proj, M=Prec, return_basis = True)
+            itsol = linsys.gmres(A, b, x0=x0, tol=1e-13, maxiter=150, Mr=Proj, M=Prec, return_basis = True)
 
             print("MINRES performed %d iterations with final res %e." % (len(itsol["relresvec"])-1, itsol["relresvec"][-1]) )
             w.vector().set_local(itsol["xk"])
 
             # extract deflation data
             if ('Vfull' in itsol) and ('Hfull' in itsol):
-                if num_deflation_vectors > 0:
+                if n_defl > 0:
                     ritz_vals, ritz_coeffs, ritz_res_norm = utils.ritzh(itsol['Vfull'], itsol['Hfull'], Z, AZ, A, M=Prec)
                     sorti = np.argsort(abs(ritz_vals))
-                    selection = sorti[:num_deflation_vectors]
+                    selection = sorti[:n_defl]
                     nZ = Z.shape[1]
                     Z = np.dot(Z, ritz_coeffs[0:nZ, selection]) \
                       + np.dot(itsol['Vfull'][:,0:-1], ritz_coeffs[nZ:,selection])
@@ -224,12 +244,16 @@ def solve_stokes(n_unknowns, linsolver="petsc", num_deflation_vectors=0):
             raise RuntimeError("Linear solver '%s' unknown." % linsolver)
 
         # Get sub-functions
+        w0.assign(w)
         u_new, p_new, lam_new = w.split()
-        errs_u += [errornorm(u_ex,u_new)]
-        errs_p += [errornorm(p_ex,p_new)]
+        # degree=... is used in dolfin 1.0, newer versions use degree_rise=... (which is cleaner)
+        errs_u += [errornorm(u_ex, u_new, degree=5)]
+        errs_p += [errornorm(p_ex, p_new, degree=4)]
         ufile_pvd << u_new
         pfile_pvd << p_new
         u_old = u_new
+
+    print('n_gridpoints=%d, n_dofs=%d, n_defl=%d, t0=%e, dt=%e, tend=%e' % (n_gridpoints, n_dofs, n_defl, t0, dt, tend))
 
     return (max(errs_u),max(errs_p))
 
