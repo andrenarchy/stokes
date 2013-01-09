@@ -52,36 +52,41 @@ class LIRK():
 	*Note:* The matrix \f$M\f$ is not required to be invertible, i.e.
 	differential algebraic equations can also be treated.'''
 
-	def __init__(self,num_stages,alpha,gamma,b,bhat=None):
+	def __init__(self,name,num_stages,order,alpha,gamma,b,bhat=None):
 		'''Initialize a Butcher Tableau for a Rosenbrock method
 
 		Keyword arguments:
 
 		self				-- the LIRK method
+		name				-- name for the LIRK method
+		order				-- order of the method, just for automated testing purposes
 		num_stages  -- number of stages \f$s\f$ in the method
 		alpha       -- The coefficients \f$\alpha_{ij}, i,j=1,\dots s\f$
 		gamma       -- The coefficients \f$\gamma_{ij}, i,j=1,\dots s\f$
 		b           -- The coefficients \f$b_i, i=1,\dots,s\f$
 		bhat        -- The coefficients \f$\hat b_i, i=1,\dots,s\f$ for an embedded method of lower order'''
 
-		# Brace yourselves, matrix multiplications are coming
+
 		self.num_stages = num_stages
-		self.alpha = np.matrix(alpha)
-		self.gamma = np.matrix(gamma)
-		self.b = np.array(b)
-		self.bhat = np.array(bhat)
+		self.name = name
+		self.order = order
+		# Brace yourselves, matrix multiplications are coming
+		self.alpha = np.asmatrix(alpha)
+		self.gamma = np.asmatrix(gamma)
+		self.b = np.asarray(b)
+		self.bhat = np.asarray(bhat)
 
 		# Compute convenience variables
 		self.gamma_diag = self.gamma[0,0]
-		self.alpha_i = np.sum(self.alpha,axis=1)
-		self.gamma_i = np.sum(self.gamma,axis=1)
+		self.alpha_i = np.sum(np.asarray(self.alpha),axis=1)
+		self.gamma_i = np.sum(np.asarray(self.gamma),axis=1)
 
 		# Compute transformed variables
 		self.c = -inv(self.gamma)
 		self.a = -self.alpha*self.c
-		self.m = -self.b*self.c
+		self.m = np.asarray(-np.asmatrix(self.b)*self.c)[0]
 		if self.bhat.any():
-			self.mhat = -self.bhat*self.c
+			self.mhat = np.asarray(-self.bhat*self.c)[0]
 
 
 	def check(self):
@@ -107,15 +112,17 @@ class LIRK():
 		print('\tTesting {}-stage LIRK method.'.format(self.num_stages))
 		err = abs(np.sum(b)-1)
 		eprint('Order 1',err)
-		err += abs(np.sum(b*betai) - 1./2)
-		eprint('Order 2',err)
-		err = err + abs(np.sum(b*alphai**2) - 1./3)
-		err2 = -1./6
-		for i in range(self.num_stages):
-			err2 += np.sum(b[i]*beta[i,:]*betai)
-		err += abs(err2)
-		eprint('Order 3', err)
-		if self.num_stages >= 3:
+		if self.order >= 2:
+			err += abs(np.sum(b*betai) - 1./2)
+			eprint('Order 2',err)
+		if self.order >= 3:
+			err = err + abs(np.sum(b*alphai**2) - 1./3)
+			err2 = -1./6
+			for i in range(self.num_stages):
+				err2 += np.sum(b[i]*beta[i,:]*betai)
+			err += abs(err2)
+			eprint('Order 3', err)
+		if self.num_stages >= 3 and self.order >= 3:
 			err2 = -1
 			for i in range(self.num_stages):
 				err2 += np.sum(self.b[i]*omega[i,:]*alphai[:])
@@ -127,15 +134,16 @@ class LIRK():
 			err2 = self.gamma_diag - .5 - 1./6*sqrt(3)
 			eprint('PDE suitable', abs(err)+abs(err2))
 		elif self.num_stages == 4:
-			err = self.b[1]*alphai[1]+self.b[2]*alphai[2]+self.b[3]*alphai[3] - 1./2
-			eprint('Consistency for O(dt)-Jacobian approximation',abs(err))
-			err = self.b[2]*self.alpha[2,1]*alphai[1] + \
-				self.b[3]*(self.alpha[3,1]*alphai[1] + self.alpha[3,2]*alphai[2]) - 1./6
-			err2 = self.b[2]*self.alpha[2,1]*betai_sub[1] + \
-				self.b[3]*(self.alpha[3,1]*betai_sub[1] + self.alpha[3,2]*betai_sub[2]) - 1./6 + self.gamma_diag/2
-			err3 = self.b[2]*beta[2,1]*alphai[1] + \
-				self.b[3]*(beta[3,1]*alphai[1] + beta[3,2]*alphai[2]) - 1./6 + self.gamma_diag/2
-			eprint('Order 3 for arbitrary W-matrices',abs(err)+abs(err2)+abs(err3))
+			if self.order >= 3:
+				err = self.b[1]*alphai[1]+self.b[2]*alphai[2]+self.b[3]*alphai[3] - 1./2
+				eprint('Consistency for O(dt)-Jacobian approximation',abs(err))
+				err = self.b[2]*self.alpha[2,1]*alphai[1] + \
+					self.b[3]*(self.alpha[3,1]*alphai[1] + self.alpha[3,2]*alphai[2]) - 1./6
+				err2 = self.b[2]*self.alpha[2,1]*betai_sub[1] + \
+					self.b[3]*(self.alpha[3,1]*betai_sub[1] + self.alpha[3,2]*betai_sub[2]) - 1./6 + self.gamma_diag/2
+				err3 = self.b[2]*beta[2,1]*alphai[1] + \
+					self.b[3]*(beta[3,1]*alphai[1] + beta[3,2]*alphai[2]) - 1./6 + self.gamma_diag/2
+				eprint('Order 3 for arbitrary W-matrices',abs(err)+abs(err2)+abs(err3))
 
 			err = self.b[3]*beta[2,1]*beta[3,2]*alphai[1]**2 \
 				- 2*self.gamma_diag**4 + 2*self.gamma_diag**3 - 1./3*self.gamma_diag**2
@@ -150,7 +158,9 @@ class LIRK():
 
 	def __repr__(self):
 		res = 'LIRK('
+		res += 'name={},'.format(self.name)
 		res += 'num_stages={},'.format(self.num_stages)
+		res += 'order={},'.format(self.order)
 		res += 'alpha={},'.format(self.alpha)
 		res += 'gamma={},'.format(self.gamma)
 		res += 'b={},'.format(self.b)
@@ -166,7 +176,7 @@ class LIRK():
 		res += 'bhat:\n{}\n'.format(self.bhat) if self.bhat.any() else ''
 		return res
 
-	def step(self,sys,F,dtF,M,t,dt,u,u_new,err_est):
+	def step(self,sys,F,dtF,M,t,dt,u,vecsrc,veccpy,zero,axpy):
 		'''Executes one LIRK step
 
 		For the operators, you have to define the operations:
@@ -186,37 +196,44 @@ class LIRK():
 		dt    			-- time step size \f$\tau\f$
 		u     			-- vector from old time step \f$u_n\f$
 		u_new 			-- computed solution \f$u_{n+1}\f$
-		err_est 		-- error estimator computed from difference to embedded lower order method.'''
+		err_est 		-- error estimator computed from difference to embedded lower order method.
+		vecsrc			-- function; vecsrc(k) should return temporary storage for k vectors as a python list
+		veccpy      -- function; veccpy(a,b) should copy the contents of vector a to b
+		zero				-- function; reset all values of a vector to 0
+		axpy        -- axpy(x,a,y) should realize the axpy function x += a*y
+		'''
+
+		# Acquire memory:
+		# - for U_ni
+		U_ni = vecsrc(self.num_stages)
+		# - for ths
+		rhs = vecsrc(1)[0]
+		# - for ui
+		ui = vecsrc(1)[0]
 
 		for i in range(self.num_stages):
 			ti = t + self.alpha_i[i]*dt
-			ui = u
-			for j in range(i-1):
-				ui += self.a[i,j]*U_ni[:,j]
-			rhs = np.zeros(np.size(u))
-#      call F(ui,rhs,ti,1d0)
-			for j in range(i-1):
-				if self.c[i,j]:
-					pass
-#          call mass(U_ni(:,j),rhs(:),ti,B%c(i,j)/dt)
-			if self.gamma_i[i]:
-				pass
-#        call dtF(u(:),rhs(:),t,dt*B%gamma_i(i))
-			U_ni[:,i] = 0
-#      call sys(rhs(:),U_ni(:,i),t,dt*B%gamma_diag)
+			veccpy(u,ui)
+			for j in range(i):
+				axpy(ui,self.a[i,j],U_ni[j])
+			zero(rhs)
+			F(rhs,1,ti,ui)
+			for j in range(i):
+				M(rhs,self.c[i,j]/dt,ti,U_ni[j])
+			dtF(rhs,dt*self.gamma_i[i],t,u)
+			zero(U_ni[i])
+			sys(U_ni[i],1,ti,rhs,dt*self.gamma_diag)
 
-		#TODO these should just copy, not change references
-		u_new = u
-		err_est = 0
 		for i in range(self.num_stages):
-			u_new += self.m[i]*U_ni[:,i]
-			if self.bhat.any():
-				err_est += self.mhat[i]*U_ni[:,i] - self.m[i]*U_ni[:,i]
-
+			axpy(u,self.m[i],U_ni[i])
+		# err_est = 0
+		#	if self.bhat.any():
+		#		err_est += (self.mhat[i] - self.m[i])*U_ni[i]
+		# return err_est
 
 # Linearly implicit Euler method
 # see any Numerics book, e.g. Deuflhard/Bornemann, Numerische Mathematik 2, 3. Auflage, p. 293.
-li_euler = LIRK(1,[[0]],[[1]],[1])
+li_euler = LIRK('LI_EULER',1,1,[[0]],[[1]],[1])
 
 # ROS2
 # see K. Dekker, J. G. Verwer: Stability of Runge-Kutta Methods for Stiff
@@ -227,7 +244,7 @@ alpha_ros2.append([1,0])
 gamma_ros2 = [[gamma,0]]
 gamma_ros2.append([-5.857864376269e-1,gamma])
 
-ros2 = LIRK(2,alpha_ros2,gamma_ros2,[.5,.5],[.5,.5])
+ros2 = LIRK('ROS2',2,2,alpha_ros2,gamma_ros2,[.5,.5],[.5,.5])
 
 del(gamma,alpha_ros2,gamma_ros2)
 
@@ -245,7 +262,7 @@ gamma_ros3p.append([-gamma,.5-2*gamma,gamma])
 b_ros3p = [2./3, 0, 1./3]
 bhat_ros3p = [1./3, 1./3, 1./3]
 
-ros3p = LIRK(3,alpha_ros3p,gamma_ros3p,b_ros3p,bhat_ros3p)
+ros3p = LIRK('ROS3P',3,3,alpha_ros3p,gamma_ros3p,b_ros3p,bhat_ros3p)
 
 del(gamma,alpha_ros3p,gamma_ros3p,b_ros3p,bhat_ros3p)
 
@@ -263,7 +280,7 @@ gamma_ros3pw.append([-.67075317547305480, -.17075317547305482,gamma])
 b_ros3pw = [.10566243270259355, .049038105676657971, .84529946162074843]
 bhat_ros3pw = [ -.1786327949540818, 1./3, .84529946162074843]
 
-ros3pw = LIRK(3,alpha_ros3pw,gamma_ros3pw,b_ros3pw,bhat_ros3pw)
+ros3pw = LIRK('ROS3PW',3,3,alpha_ros3pw,gamma_ros3pw,b_ros3pw,bhat_ros3pw)
 
 del(gamma,alpha_ros3pw,gamma_ros3pw,b_ros3pw,bhat_ros3pw)
 
@@ -296,7 +313,7 @@ gamma_ros34pw2.append([c41, c42, c43, gamma])
 b_ros34pw2 = [c41, c42, 1+c43,.43586652150845900]
 bhat_ros34pw2 = [.37810903145819369, -.096042292212423178, .5, .21793326075422950]
 
-ros34pw2 = LIRK(4,alpha_ros34pw2,gamma_ros34pw2,b_ros34pw2,bhat_ros34pw2)
+ros34pw2 = LIRK('ROS34PW2',4,3,alpha_ros34pw2,gamma_ros34pw2,b_ros34pw2,bhat_ros34pw2)
 
 del(gamma,a21,a31,a32,a41,a42,a43,c21,c31,c32,c41,c42,c43,alpha_ros34pw2,gamma_ros34pw2,b_ros34pw2,bhat_ros34pw2)
 
@@ -329,7 +346,7 @@ gamma_ros34pw3.append([c41, c42, c43, gamma])
 b_ros34pw3 = [2.2047681286931747e-1, 2.7828278331185935e-3, 7.1844787635140066e-3, 7.6955588053404989e-1]
 bhat_ros34pw3 = [ 3.1300297285209688e-1, -2.8946895245112692e-1, 9.7646597959903003e-1, 0 ]
 
-ros34pw3 = LIRK(4,alpha_ros34pw3,gamma_ros34pw3,b_ros34pw3,bhat_ros34pw3)
+ros34pw3 = LIRK('ROS34PW3',4,3,alpha_ros34pw3,gamma_ros34pw3,b_ros34pw3,bhat_ros34pw3)
 
 del(gamma,a21,a31,a32,a41,a42,a43,c21,c31,c32,c41,c42,c43,alpha_ros34pw3,gamma_ros34pw3,b_ros34pw3,bhat_ros34pw3)
 
@@ -362,7 +379,7 @@ gamma_rowdaind2.append([c41, c42, c43, gamma])
 b_rowdaind2 = [ 2./3, 0, 1./30, .3 ]
 bhat_rowdaind2 = [ 4.799002800355166e-1, 5.176203811215082e-1, 2.479338842975209e-3, 0]
 
-rowdaind2 = LIRK(4,alpha_rowdaind2,gamma_rowdaind2,b_rowdaind2,bhat_rowdaind2)
+rowdaind2 = LIRK('ROWDAIND2',4,3,alpha_rowdaind2,gamma_rowdaind2,b_rowdaind2,bhat_rowdaind2)
 
 del(gamma,a21,a31,a32,a41,a42,a43,c21,c31,c32,c41,c42,c43,alpha_rowdaind2,gamma_rowdaind2,b_rowdaind2,bhat_rowdaind2)
 
