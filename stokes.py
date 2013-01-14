@@ -13,27 +13,56 @@ from pyamg import smoothed_aggregation_solver
 parameters.linear_algebra_backend = "uBLAS"
 
 def main():
-    # Load mesh
-    #mesh = UnitCube(8, 8, 8)
-    errs_u = []
-    errs_p = []
-    #for i in [ 2**i for i in range(2,7) ]:
-        #print('Solving stokes with i={}'.format(i))
-    err_u, err_p = solve_stokes(2**6, linsolver="krypy", n_defl=5)
-    print('err_u:',err_u)
-    print('err_p:',err_p)
+    alpha = 20
+    beta = 5
 
+    sin0 = "sin(alpha*x[0]*t)"
+    sin1 = "sin(alpha*x[1]*t)"
+    cos0 = "cos(alpha*x[0]*t)"
+    cos1 = "cos(alpha*x[1]*t)"
+    u0 = sin0+"*"+sin1
+    u1 = cos0+"*"+cos1
 
-#       errs_u += [err_u]
-#       errs_p += [err_p]
-#   errs_u = np.array(errs_u)
-#   errs_p = np.array(errs_p)
-#   eoc_u = np.log(errs_u[1:]/errs_u[:-1])/np.log(0.5)
-#   eoc_p = np.log(errs_p[1:]/errs_p[:-1])/np.log(0.5)
-#   print('err_u: ', errs_u)
-#   print('err_p: ', errs_p)
-#   print('eoc_u: ', eoc_u)
-#   print('eoc_p: ', eoc_p)
+    d00_u0 = "(-alpha*alpha*t*t*t*"+u0+")"
+    d11_u1 = "(-alpha*alpha*t*t*t*"+u1+")"
+    dt_u0 = "("+u0+" + t*alpha*(x[0]*"+cos0+"*"+sin1+" + x[1]*"+sin0+"*"+cos1+"))"
+    dt_u1 = "("+u1+" - t*alpha*(x[0]*"+sin0+"*"+cos1+" + x[1]*"+cos0+"*"+sin1+"))"
+    d0_p = "(beta*t*exp(beta*t*x[0]))"
+    d1_p = "(beta*t*exp(beta*t*x[1]))"
+
+    u_ex = Expression(("t*"+u0, "t*"+u1), alpha=alpha, t=0)
+    p_ex = Expression(("exp(beta*t*x[0])+exp(beta*t*x[1])"), beta=beta, t=0)
+    f = Expression(( dt_u0+" - "+d00_u0+" + "+d0_p, dt_u1+" - "+d11_u1+" + "+d1_p), alpha=alpha, beta=beta, t=0)
+
+    n_gridpoints = 2**5
+    mesh = UnitSquareMesh(n_gridpoints,n_gridpoints)
+    boundaries = MeshFunction('size_t', mesh, mesh.topology().dim()-1)
+    class Boundary(SubDomain):
+        def inside(self, x, on_boundary):
+            return on_boundary
+    boundaries.set_all(0)
+    Boundary().mark(boundaries, 1)
+    dbcs = {1: u_ex}
+
+    sol = solve_stokes(mesh,
+            u_init = u_ex,
+            f = f,
+            boundaries = boundaries,
+            dbcs = dbcs,
+            expressions = [u_ex, p_ex],
+            scale_dt = 5,
+            tend = 1,
+            u_file = File("results/velocity.pvd"),
+            p_file = File("results/pressure.pvd"),
+            u_ex = u_ex,
+            p_ex = p_ex,
+            u_err_file = File("results/velocity_error.pvd"),
+            p_err_file = File("results/pressure_error.pvd")
+            )
+    if 'u_err_norms' in sol:
+        print('max(u_err_norms):', max(sol['u_err_norms']))
+    if 'p_err_norms' in sol:
+        print('max(p_err_norms):', max(sol['p_err_norms']))
 
 def get_csr_matrix(A):
     '''get csr matrix from dolfin without copying data
@@ -58,46 +87,64 @@ def getLinearOperator(A):
         return resvec.array()
     return LinearOperator( (A.size(0), A.size(1)), matvec=matvec )
 
-def solve_stokes(n_gridpoints, linsolver="krypy", n_defl=0):
-    alpha = 20
-    beta = 5
+def solve_stokes(mesh,
+                 u_init = Constant(0.),
+                 f = Constant(0.),
+                 boundaries = None,
+                 dbcs = {},
+                 nbcs = {},
+                 expressions = [],
+                 t0 = 0.0,
+                 tend = 1.0,
+                 scale_dt = 1.0,
+                 linsolver = "krypy",
+                 linsolver_params = {},
+                 n_defl = 0,
+                 u_file = None,
+                 p_file = None,
+                 u_err_file = None,
+                 p_err_file = None,
+                 u_ex = None,
+                 p_ex = None
+                 ):
 
-    sin0 = "sin(alpha*x[0]*t)"
-    sin1 = "sin(alpha*x[1]*t)"
-    cos0 = "cos(alpha*x[0]*t)"
-    cos1 = "cos(alpha*x[1]*t)"
-    u0 = sin0+"*"+sin1
-    u1 = cos0+"*"+cos1
+    if boundaries is None:
+        boundaries = MeshFunction('uint', mesh, mesh.topology().dim()-1)
+        boundaries.set_all(0)
 
-    d00_u0 = "(-alpha*alpha*t*t*t*"+u0+")"
-    d11_u1 = "(-alpha*alpha*t*t*t*"+u1+")"
-    dt_u0 = "("+u0+" + t*alpha*(x[0]*"+cos0+"*"+sin1+" + x[1]*"+sin0+"*"+cos1+"))"
-    dt_u1 = "("+u1+" - t*alpha*(x[0]*"+sin0+"*"+cos1+" + x[1]*"+cos0+"*"+sin1+"))"
-    d0_p = "(beta*t*exp(beta*t*x[0]))"
-    d1_p = "(beta*t*exp(beta*t*x[1]))"
+    if not dbcs and not nbcs:
+        raise ValueError('Dirichlet or Neumann boundary conditions have to be specified (both possible)!')
 
-    u_ex = Expression(("t*"+u0, "t*"+u1), alpha=alpha, t=0)
-    p_ex = Expression(("exp(beta*t*x[0])+exp(beta*t*x[1])"), beta=beta, t=0)
-    f = Expression(( dt_u0+" - "+d00_u0+" + "+d0_p, dt_u1+" - "+d11_u1+" + "+d1_p), alpha=alpha, beta=beta, t=0)
-    '''
-    dtu0 = "-sin(t*x[0])*sin(t*x[1]) - t*x[0]*cos(t*x[0])*sin(t*x[1]) - t*x[1]*sin(t*x[0])*cos(t*x[1]) "
-    dtu1 = "-cos(t*x[0])*cos(t*x[1]) + t*x[0]*sin(t*x[0])*cos(t*x[1]) + t*x[1]*cos(t*x[0])*sin(t*x[1]) "
-    lap_u0 = "- 2*t*t*t/Reynolds*sin(t*x[0])*sin(t*x[1]) "
-    lap_u1 = "- 2*t*t*t/Reynolds*cos(t*x[0])*cos(t*x[1]) "
-    nonlin0 = " +t*t*t*sin(t*x[0])*cos(t*x[0]) "
-    nonlin1 = " -t*t**sin(t*x[1])*cos(t*x[1]) "
-    grad_p0 = " + t*exp(t*x[0]) "
-    grad_p1 = " + t*exp(t*x[1]) "
-    '''
+    hmin = mesh.hmin()
+    hmax = mesh.hmax()
 
-    mesh = UnitSquare(n_gridpoints,n_gridpoints)
-    h = mesh.hmin()
+    # keep a list of all expressions that need the current time
+    expressions = list(expressions)
+    expressions.append(f)
+    expressions.extend(dbcs.values())
+    expressions.extend(nbcs.values())
+    if u_ex is not None:
+        expressions.append(u_ex)
+    if p_ex is not None:
+        expressions.append(p_ex)
+    # Set time in ALL THE expressions.
+    # TODO this breaks if any of the expressions has no .t available. Fix this.
+    def set_time(expressions, t):
+        for expr in expressions:
+            # TODO Well, well. If any of the expressions has a Sum(), in which
+            #      one component has the parameter 't', that parameter is not
+            #      going to get set. With hasattr(), this fails silently,
+            #      otherwise an exception would be raised. This is something
+            #      that needs to be fixed in any case.
+            if hasattr(expr, 't'):
+                expr.t = t
 
     # Define function spaces
     V = VectorFunctionSpace(mesh, "CG", 2)
     Q = FunctionSpace(mesh, "CG", 1)
     L = FunctionSpace(mesh, "R", 0)
     W = MixedFunctionSpace([V,Q,L])
+    # The solution
     w = Function(W)
 
     # get dof mappings of subspaces
@@ -106,13 +153,22 @@ def solve_stokes(n_gridpoints, linsolver="krypy", n_defl=0):
     Ldofs = W.sub(2).collapse(mesh)[1].values()
     n_dofs = len(Vdofs) + len(Qdofs) + len(Ldofs)
 
-    t0 = 0
-    tend = 0.1
-    dt = 0.01
+    t = t0
+    set_time(expressions, t)
+    dt = scale_dt * mesh.hmax()
+
+    print('Solve with n_dofs=%d, dt=%e, hmin/hmax=%e.'
+            % (n_dofs, dt, mesh.hmin()/mesh.hmax()))
 
     # Initial value
     u_old = Function(V)
-    u_old.interpolate(u_ex)
+    u_old.interpolate(u_init)
+    if u_file is not None:
+        u_file << u_old
+    if p_file is not None:
+        pass
+        #TODO
+        #p_file << ???
 
     # for initial vector of iterative method
     w0 = Function(W)
@@ -124,40 +180,51 @@ def solve_stokes(n_gridpoints, linsolver="krypy", n_defl=0):
     Proj = None
 
     # Define variational problem
-    (u, p, lam) = TrialFunctions(W) #, TrialFunction(Q), TrialFunction(L)
-    (v, q, l) = TestFunctions(W) #, TestFunction(Q), TestFunction(L)
+    (u, p, lam) = TrialFunctions(W)
+    (v, q, l) = TestFunctions(W)
+    ds = Measure('ds')[boundaries]
+    
+    dbc = [DirichletBC(W.sub(0), bc, boundaries, tag) for tag, bc in dbcs.items()]
     Avar = inner(u,v)*dx + dt*(inner(grad(u), grad(v))*dx - div(v)*p*dx - q*div(u)*dx + lam*q*dx + p*l*dx)
-    bc = DirichletBC(W.sub(0), u_ex, lambda x, bd: bd)
 
     # variational problem for preconditioner
     Mvar = inner(u,v)*dx + dt*inner(grad(u), grad(v))*dx + p*q*dx + lam*l*dx
     Nvar = inner(grad(p),grad(q))*dx
     Mprec = None
 
-    ufile_pvd = File("results/velocity.pvd")
-    pfile_pvd = File("results/pressure.pvd")
-    norms_u = []
-    errs_u = []
-    errs_p = []
-    for t in np.arange(t0,tend,dt):
-        # set time in expressions
-        u_ex.t = t+dt
-        p_ex.t = t+dt
-        f.t = t+dt
+    if u_ex is not None:
+        u_err_norms = []
+    if p_ex is not None:
+        p_err_norms = []
+    while t<tend:
+        t += dt
+        set_time(expressions, t)
+        print(t)
 
         # update right hand side for implicit Euler
-        bvar = inner(u_old,v)*dx + dt*(inner(f, v)*dx + p_ex*l*dx)
+        bvar = inner(u_old,v)*dx + dt*inner(f, v)*dx
+        if p_ex is not None:
+            bvar += dt*p_ex*l*dx
+        # incorporate Neumann boundary conditions into right hand side
+        for tag, bc in nbcs.items():
+            bvar += dt*bc*v*ds(tag)
+
+        #solve(Avar == bvar, w, bcs=dbc[0])
+        A, b = assemble_system(Avar, bvar, dbc,
+              exterior_facet_domains = boundaries
+              )
 
         # use initial guess that satisfies boundary conditions
         #w0.vector().zero()
-        bc.apply(w0.vector())
+        for bc in dbc:
+            bc.apply(w0.vector())
         x0 = w0.vector().array().reshape((w0.vector().size(),1))
 
         # solve the linear system
         if linsolver in ["petsc", "lu", "gmres"]:
             solve(Avar == bvar, w, bc, solver_parameters = {"linear_solver": linsolver})
         elif linsolver=="krypy":
-            A, b = assemble_system(Avar, bvar, bc)
+            #A, b = assemble_system(Avar, bvar, bc)
             A = get_csr_matrix(A)
             b = b.data().reshape((b.size(),1))
 
@@ -165,13 +232,15 @@ def solve_stokes(n_gridpoints, linsolver="krypy", n_defl=0):
             # cf. "Fast iterative solvers for discrete Stokes equations", 
             # Peters, Reichelt, Reusken 2005
             if Mprec is None:
-                M, _ = assemble_system(Mvar, bvar, bc)
+                M, _ = assemble_system(Mvar, bvar, dbc,
+                        exterior_facet_domains=boundaries)
                 M = get_csr_matrix(M)
                 MV = M[Vdofs,:][:,Vdofs]
                 MQ = M[Qdofs,:][:,Qdofs]
                 ML = M[Ldofs,:][:,Ldofs]
 
-                N, _ = assemble_system(Nvar, bvar, bc)
+                N, _ = assemble_system(Nvar, bvar, dbc,
+                        exterior_facet_domains=boundaries)
                 N = get_csr_matrix(N)
                 NQ = N[Qdofs,:][:,Qdofs]
 
@@ -208,11 +277,11 @@ def solve_stokes(n_gridpoints, linsolver="krypy", n_defl=0):
                     xL = x[Ldofs]
                     ret = np.zeros(x.shape)
                     ret[Vdofs] = MVamg.solve(xV, maxiter=amgmaxiter, tol=amgtol).reshape(xV.shape)
-                    if h**2 <= dt:
+                    if hmin**2 <= dt:
                         ret[Qdofs] =           MQamg.solve(xQ, maxiter=amgmaxiter, tol=amgtol).reshape(xQ.shape) \
                                    + (1/dt)   *NQamg.solve(xQ, maxiter=amgmaxiter, tol=amgtol).reshape(xQ.shape)
                     else:
-                        ret[Qdofs] = (h**2/dt)*MQamg.solve(xQ, maxiter=amgmaxiter, tol=amgtol).reshape(xQ.shape) \
+                        ret[Qdofs] = (hmin**2/dt)*MQamg.solve(xQ, maxiter=amgmaxiter, tol=amgtol).reshape(xQ.shape) \
                                    + (1/dt)   *NQamg.solve(xQ, maxiter=amgmaxiter, tol=amgtol).reshape(xQ.shape)
                     ret[Ldofs] = xL
                     return ret
@@ -226,7 +295,7 @@ def solve_stokes(n_gridpoints, linsolver="krypy", n_defl=0):
 
             itsol = linsys.gmres(A, b, x0=x0, tol=1e-13, maxiter=150, Mr=Proj, M=Prec, return_basis = True)
 
-            print("MINRES performed %d iterations with final res %e." % (len(itsol["relresvec"])-1, itsol["relresvec"][-1]) )
+            print("GMRES performed %d iterations with final res %e." % (len(itsol["relresvec"])-1, itsol["relresvec"][-1]) )
             w.vector().set_local(itsol["xk"])
 
             # extract deflation data
@@ -247,15 +316,45 @@ def solve_stokes(n_gridpoints, linsolver="krypy", n_defl=0):
         w0.assign(w)
         u_new, p_new, lam_new = w.split()
         # degree=... is used in dolfin 1.0, newer versions use degree_rise=... (which is cleaner)
-        errs_u += [errornorm(u_ex, u_new, degree=5)]
-        errs_p += [errornorm(p_ex, p_new, degree=4)]
-        ufile_pvd << u_new
-        pfile_pvd << p_new
-        u_old = u_new
+        if u_file is not None:
+            u_file << u_new, t
+        if p_file is not None:
+            p_file << p_new, t
 
-    print('n_gridpoints=%d, n_dofs=%d, n_defl=%d, t0=%e, dt=%e, tend=%e' % (n_gridpoints, n_dofs, n_defl, t0, dt, tend))
+        if u_ex is not None:
+            u_err_norms += [errornorm(u_ex, u_new)]
+            if u_err_file is not None:
+                u_err = Function(V)
+                u_err.interpolate(u_ex)
+                u_new_tmp = Function(V)
+                u_new_tmp.assign(u_new)
+                u_err.vector().axpy(-1.0, u_new_tmp.vector())
+                u_err_file << u_err
+        if p_ex is not None:
+            p_err_norms += [errornorm(p_ex, p_new)]
+            if p_err_file is not None:
+                p_err = Function(Q)
+                p_err.interpolate(p_ex)
+                p_new_tmp = Function(V)
+                p_new_tmp.assign(p_new)
+                p_err.vector().axpy(-1.0, p_new_tmp.vector())
+                p_err_file << u_err
 
-    return (max(errs_u),max(errs_p))
+        u_old.assign(u_new)
+
+    sol = {
+            'u': u_new,
+            'p': p_new,
+          }
+    if u_ex is not None:
+        sol['u_err_norms'] = u_err_norms
+    if p_ex is not None:
+        sol['p_err_norms'] = p_err_norms
+    print(norm(u_new))
+    print(norm(p_new))
+    print(norm(lam_new))
+
+    return sol
 
 
 
