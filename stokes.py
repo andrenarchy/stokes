@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- coding: UTF-8 -*-
 import math
 import numpy as np
 from dolfin import *
@@ -13,6 +14,40 @@ from pyamg import smoothed_aggregation_solver
 parameters.linear_algebra_backend = "uBLAS"
 
 def main():
+    stokes_karman2d()
+
+def stokes_karman2d():
+    # cf. Schäfer and Turek, Benchmark Computations of Laminar Flow Around a Cylinder, 1996
+    mesh = Mesh('msh_karman2d.xml')
+    boundaries = MeshFunction('size_t', mesh, mesh.topology().dim()-1)
+    boundaries.set_all(0)
+
+    class Solid(SubDomain):
+        def inside(self, x, on_boundary):
+            return on_boundary and (x[1]<DOLFIN_EPS or x[1]>0.41-DOLFIN_EPS or 
+                    (x[0]>DOLFIN_EPS and x[0]<2.2-DOLFIN_EPS))
+    Solid().mark(boundaries, 1)
+
+    class Inlet(SubDomain):
+        def inside(self, x, on_boundary):
+            return on_boundary and (x[0]<=DOLFIN_EPS)# or x[0]>=2.2-DOLFIN_EPS)
+    Inlet().mark(boundaries, 2)
+
+    dbcs = {
+            1: Constant((0.0,0.0)),
+            2: Expression(('4*x[1]*(0.41-x[1])/(0.41*0.41)','0.0'))
+            }
+    sol = solve_stokes(mesh, 
+            u_init = Constant((0.0,0.0)),
+            f = Constant((0.0,0.0)),
+            boundaries = boundaries,
+            dbcs = dbcs,
+            scale_dt=0.01,
+            u_file = File("results/velocity.pvd"),
+            p_file = File("results/pressure.pvd"),
+            )
+
+def stokes_eoc2d():
     alpha = 20
     beta = 5
 
@@ -90,6 +125,7 @@ def getLinearOperator(A):
 def solve_stokes(mesh,
                  u_init = Constant(0.),
                  f = Constant(0.),
+                 lagrange_mult = False, # use if you solve a pure Dirichlet problem (for velocity)
                  boundaries = None,
                  dbcs = {},
                  nbcs = {},
@@ -142,16 +178,21 @@ def solve_stokes(mesh,
     # Define function spaces
     V = VectorFunctionSpace(mesh, "CG", 2)
     Q = FunctionSpace(mesh, "CG", 1)
-    L = FunctionSpace(mesh, "R", 0)
-    W = MixedFunctionSpace([V,Q,L])
+    function_spaces = [V,Q]
+    if lagrange_mult:
+        L = FunctionSpace(mesh, "R", 0)
+        function_spaces.append(L)
+    W = MixedFunctionSpace(function_spaces)
     # The solution
     w = Function(W)
 
     # get dof mappings of subspaces
     Vdofs = W.sub(0).collapse(mesh)[1].values()
     Qdofs = W.sub(1).collapse(mesh)[1].values()
-    Ldofs = W.sub(2).collapse(mesh)[1].values()
-    n_dofs = len(Vdofs) + len(Qdofs) + len(Ldofs)
+    n_dofs = len(Vdofs) + len(Qdofs)
+    if lagrange_mult:
+        Ldofs = W.sub(2).collapse(mesh)[1].values()
+        n_dofs += len(Ldofs)
 
     t = t0
     set_time(expressions, t)
@@ -180,15 +221,23 @@ def solve_stokes(mesh,
     Proj = None
 
     # Define variational problem
-    (u, p, lam) = TrialFunctions(W)
-    (v, q, l) = TestFunctions(W)
+    if lagrange_mult:
+        (u, p, lam) = TrialFunctions(W)
+        (v, q, l) = TestFunctions(W)
+    else:
+        (u, p) = TrialFunctions(W)
+        (v, q) = TestFunctions(W)
     ds = Measure('ds')[boundaries]
     
     dbc = [DirichletBC(W.sub(0), bc, boundaries, tag) for tag, bc in dbcs.items()]
-    Avar = inner(u,v)*dx + dt*(inner(grad(u), grad(v))*dx - div(v)*p*dx - q*div(u)*dx + lam*q*dx + p*l*dx)
+    Avar = inner(u,v)*dx + dt*(inner(grad(u), grad(v))*dx - div(v)*p*dx - q*div(u)*dx)
+    if lagrange_mult:
+        Avar += dt*(lam*q*dx + p*l*dx)
 
     # variational problem for preconditioner
-    Mvar = inner(u,v)*dx + dt*inner(grad(u), grad(v))*dx + p*q*dx + lam*l*dx
+    Mvar = inner(u,v)*dx + dt*inner(grad(u), grad(v))*dx + p*q*dx
+    if lagrange_mult:
+        Mvar += lam*l*dx
     Nvar = inner(grad(p),grad(q))*dx
     Mprec = None
 
@@ -203,28 +252,26 @@ def solve_stokes(mesh,
 
         # update right hand side for implicit Euler
         bvar = inner(u_old,v)*dx + dt*inner(f, v)*dx
-        if p_ex is not None:
+        if p_ex is not None and lagrange_mult:
             bvar += dt*p_ex*l*dx
         # incorporate Neumann boundary conditions into right hand side
         for tag, bc in nbcs.items():
             bvar += dt*bc*v*ds(tag)
 
-        #solve(Avar == bvar, w, bcs=dbc[0])
-        A, b = assemble_system(Avar, bvar, dbc,
-              exterior_facet_domains = boundaries
-              )
-
-        # use initial guess that satisfies boundary conditions
-        #w0.vector().zero()
-        for bc in dbc:
-            bc.apply(w0.vector())
-        x0 = w0.vector().array().reshape((w0.vector().size(),1))
-
         # solve the linear system
         if linsolver in ["petsc", "lu", "gmres"]:
-            solve(Avar == bvar, w, bc, solver_parameters = {"linear_solver": linsolver})
+            solve(Avar == bvar, w, dbc, solver_parameters = {"linear_solver": linsolver})
         elif linsolver=="krypy":
-            #A, b = assemble_system(Avar, bvar, bc)
+            A, b = assemble_system(Avar, bvar, dbc,
+                  #exterior_facet_domains = boundaries
+                  )
+
+            # use initial guess that satisfies boundary conditions
+            #w0.vector().zero()
+            for bc in dbc:
+                bc.apply(w0.vector())
+            x0 = w0.vector().array().reshape((w0.vector().size(),1))
+
             A = get_csr_matrix(A)
             b = b.data().reshape((b.size(),1))
 
@@ -237,7 +284,8 @@ def solve_stokes(mesh,
                 M = get_csr_matrix(M)
                 MV = M[Vdofs,:][:,Vdofs]
                 MQ = M[Qdofs,:][:,Qdofs]
-                ML = M[Ldofs,:][:,Ldofs]
+                if lagrange_mult:
+                    ML = M[Ldofs,:][:,Ldofs]
 
                 N, _ = assemble_system(Nvar, bvar, dbc,
                         exterior_facet_domains=boundaries)
@@ -274,7 +322,8 @@ def solve_stokes(mesh,
                 def Prec_solve(x):
                     xV = x[Vdofs]
                     xQ = x[Qdofs]
-                    xL = x[Ldofs]
+                    if lagrange_mult:
+                        xL = x[Ldofs]
                     ret = np.zeros(x.shape)
                     ret[Vdofs] = MVamg.solve(xV, maxiter=amgmaxiter, tol=amgtol).reshape(xV.shape)
                     if hmin**2 <= dt:
@@ -283,7 +332,8 @@ def solve_stokes(mesh,
                     else:
                         ret[Qdofs] = (hmin**2/dt)*MQamg.solve(xQ, maxiter=amgmaxiter, tol=amgtol).reshape(xQ.shape) \
                                    + (1/dt)   *NQamg.solve(xQ, maxiter=amgmaxiter, tol=amgtol).reshape(xQ.shape)
-                    ret[Ldofs] = xL
+                    if lagrange_mult:
+                        ret[Ldofs] = xL
                     return ret
                 Prec = LinearOperator(A.shape, Prec_solve)
 
@@ -293,7 +343,7 @@ def solve_stokes(mesh,
                 AZ = A*Z
                 Proj, x0 = utils.get_projection(b, Z, AZ, x0)
 
-            itsol = linsys.gmres(A, b, x0=x0, tol=1e-13, maxiter=150, Mr=Proj, M=Prec, return_basis = True)
+            itsol = linsys.gmres(A, b, x0=x0, tol=1e-6, maxiter=150, Mr=Proj, M=Prec, return_basis = True)
 
             print("GMRES performed %d iterations with final res %e." % (len(itsol["relresvec"])-1, itsol["relresvec"][-1]) )
             w.vector().set_local(itsol["xk"])
@@ -314,7 +364,10 @@ def solve_stokes(mesh,
 
         # Get sub-functions
         w0.assign(w)
-        u_new, p_new, lam_new = w.split()
+        if lagrange_mult:
+            u_new, p_new, lam_new = w.split()
+        else:
+            u_new, p_new = w.split()
         # degree=... is used in dolfin 1.0, newer versions use degree_rise=... (which is cleaner)
         if u_file is not None:
             u_file << u_new, t
@@ -350,9 +403,10 @@ def solve_stokes(mesh,
         sol['u_err_norms'] = u_err_norms
     if p_ex is not None:
         sol['p_err_norms'] = p_err_norms
-    print(norm(u_new))
-    print(norm(p_new))
-    print(norm(lam_new))
+    print('norm(u_new) = %e' % norm(u_new))
+    print('norm(p_new) = %e' % norm(p_new))
+    if lagrange_mult:
+        print('norm(l_new) = %e' % norm(l_new))
 
     return sol
 
