@@ -10,11 +10,12 @@ from numpy import intc
 from krypy.krypy import linsys, utils
 from pyamg import smoothed_aggregation_solver
 #from solver_diagnostics import solver_diagnostics # pyamg
+from matplotlib import pyplot as pp
 
 parameters.linear_algebra_backend = "uBLAS"
 
 def main():
-    stokes_karman3d()
+    stokes_eoc2d()
 
 def stokes_karman2d():
     # cf. Schäfer and Turek, Benchmark Computations of Laminar Flow Around a Cylinder, 1996
@@ -85,7 +86,7 @@ def stokes_karman3d():
             p_file = File("results/pressure.pvd"),
             )
 
-def stokes_eoc2d():
+def stokes_eoc2d(refines = 3):
     alpha = 20
     beta = 5
 
@@ -107,35 +108,53 @@ def stokes_eoc2d():
     p_ex = Expression(("exp(beta*t*x[0])+exp(beta*t*x[1])"), beta=beta, t=0)
     f = Expression(( dt_u0+" - "+d00_u0+" + "+d0_p, dt_u1+" - "+d11_u1+" + "+d1_p), alpha=alpha, beta=beta, t=0)
 
-    n_gridpoints = 2**5
-    mesh = UnitSquareMesh(n_gridpoints,n_gridpoints)
-    boundaries = MeshFunction('size_t', mesh, mesh.topology().dim()-1)
-    class Boundary(SubDomain):
-        def inside(self, x, on_boundary):
-            return on_boundary
-    boundaries.set_all(0)
-    Boundary().mark(boundaries, 1)
-    dbcs = {1: u_ex}
+    hmax = []
+    u_err_norms = []
+    p_err_norms = []
+    for refine in range(2,3+refines):
+        n_gridpoints = 2**refine
+        mesh = UnitSquareMesh(n_gridpoints,n_gridpoints)
+        boundaries = MeshFunction('size_t', mesh, mesh.topology().dim()-1)
+        class Boundary(SubDomain):
+            def inside(self, x, on_boundary):
+                return on_boundary
+        boundaries.set_all(0)
+        Boundary().mark(boundaries, 1)
+        dbcs = {1: u_ex}
 
-    sol = solve_stokes(mesh,
-            u_init = u_ex,
-            f = f,
-            boundaries = boundaries,
-            dbcs = dbcs,
-            expressions = [u_ex, p_ex],
-            scale_dt = 5,
-            tend = 1,
-            u_file = File("results/velocity.pvd"),
-            p_file = File("results/pressure.pvd"),
-            u_ex = u_ex,
-            p_ex = p_ex,
-            u_err_file = File("results/velocity_error.pvd"),
-            p_err_file = File("results/pressure_error.pvd")
-            )
-    if 'u_err_norms' in sol:
+        sol = solve_stokes(mesh,
+                u_init = u_ex,
+                f = f,
+                lagrange_mult = True,
+                boundaries = boundaries,
+                dbcs = dbcs,
+                expressions = [u_ex, p_ex],
+                scale_dt = 0.2,
+                linsolver = 'petsc',
+                tend = 1,
+                u_file = File("results/eoc2d_%02d_velocity.pvd" % refine),
+                p_file = File("results/eoc2d_%02d_pressure.pvd" % refine),
+                u_ex = u_ex,
+                p_ex = p_ex,
+                u_err_file = File("results/eoc2d_%02d_velocity_error.pvd" % refine),
+                p_err_file = File("results/eoc2d_%02d_pressure_error.pvd" % refine)
+                )
+        hmax.append(mesh.hmax())
+        u_err_norms.append( max(sol['u_err_norms']) )
+        p_err_norms.append( max(sol['p_err_norms']) )
+
         print('max(u_err_norms):', max(sol['u_err_norms']))
-    if 'p_err_norms' in sol:
         print('max(p_err_norms):', max(sol['p_err_norms']))
+    hmax = np.array(hmax)
+    u_err_norms = np.array(u_err_norms)
+    p_err_norms = np.array(p_err_norms)
+
+    u_eoc = np.log(u_err_norms[1:]/u_err_norms[:-1]) / np.log(hmax[1:]/hmax[:-1])
+    p_eoc = np.log(p_err_norms[1:]/p_err_norms[:-1]) / np.log(hmax[1:]/hmax[:-1])
+
+    pp.loglog(hmax, u_err_norms)
+    pp.loglog(hmax, p_err_norms)
+    pp.show()
 
 def get_csr_matrix(A):
     '''get csr matrix from dolfin without copying data
@@ -444,7 +463,7 @@ def solve_stokes(mesh,
     print('norm(u_new) = %e' % norm(u_new))
     print('norm(p_new) = %e' % norm(p_new))
     if lagrange_mult:
-        print('norm(l_new) = %e' % norm(l_new))
+        print('norm(lam_new) = %e' % norm(lam_new))
 
     return sol
 
