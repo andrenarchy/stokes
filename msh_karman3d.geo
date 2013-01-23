@@ -1,10 +1,10 @@
 Point(1) = {0.0, 0.0, 0.0}; // back lower left
-Point(2) = {2.2, 0.0, 0.0}; // back lower right
-Point(3) = {2.2, 0.41, 0.0}; // back upper right
+Point(2) = {2.5, 0.0, 0.0}; // back lower right
+Point(3) = {2.5, 0.41, 0.0}; // back upper right
 Point(4) = {0.0, 0.41, 0.0}; // back upper left
 Point(5) = {0.0, 0.0, 0.41}; // front lower left
-Point(6) = {2.2, 0.0, 0.41}; // front lower right
-Point(7) = {2.2, 0.41, 0.41}; // front upper right
+Point(6) = {2.5, 0.0, 0.41}; // front lower right
+Point(7) = {2.5, 0.41, 0.41}; // front upper right
 Point(8) = {0.0, 0.41, 0.41}; // front upper left
 Line(1) = {1, 2}; // back bottom
 Line(2) = {2, 3}; // back right
